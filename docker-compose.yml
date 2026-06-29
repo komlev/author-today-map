@@ -1,0 +1,15 @@
+services:
+  scraper:
+    build: .
+    volumes:
+      - scraper-data:/data
+    environment:
+      - COOKIES=${COOKIES}
+      - MIN_DELAY=${MIN_DELAY:-1.5}
+      - MAX_DELAY=${MAX_DELAY:-4.0}
+      - DEBUG=${DEBUG:-}
+      - DEEP_SCRAPE=${DEEP_SCRAPE:-}
+    restart: "no"
+
+volumes:
+  scraper-data:
