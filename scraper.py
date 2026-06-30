@@ -2,31 +2,31 @@
 """
 author.today full-catalog scraper.
 
-Two-phase strategy to reach all ~311K books:
+Three phases, all mandatory:
 
   Phase 1 — Genre listings
-    Fetch every genre slug from /work/genres.
-    For each genre, paginate through all pages (up to 400 pages × 25 books).
-    ~70 genres × 10K cap = up to 700K raw entries → ~311K unique books after dedup.
+    71 genre URLs × up to 400 pages × 25 books = up to 710K raw entries.
+    After deduplication this covers the full ~311K catalog.
 
   Phase 2 — Author works pages
-    Every book card exposes the author's /u/{slug}/works URL.
-    After Phase 1, scrape each unique author page to catch books that
-    fell below every genre's top-10K.
+    Every book card exposes /u/{slug}/works.
+    Scraping each author page catches books that fell below every genre's
+    top-10K pagination cap.
 
-State files (all in /data, restart-safe):
-  genre_queue.txt   — genre listing URLs still to process
-  author_queue.txt  — author works URLs still to process
-  seen_ids.txt      — work IDs already saved (dedup)
-  seen_authors.txt  — author URLs already scraped (dedup)
-  books.jsonl       — output: one JSON object per line
+  Phase 3 — Tags
+    Individual book pages (/work/{id}) carry the full tag list.
+    Tags are not present on listing cards — only genres are.
+    This phase visits every discovered work page and saves tags to
+    tags_cache.jsonl, then merges everything into books.jsonl.
+    It is resumable: a restart skips IDs already in tags_cache.jsonl.
 
-Optional Phase 3 — Tags (DEEP_SCRAPE=1):
-  Visit each individual work page to add the full tag list.
-  ~311K extra requests; ~173 h at default rate — use sparingly.
-
-Usage:
-  docker compose run --rm scraper
+State files (all in /data):
+  genre_queue.txt     genre listing URLs still to process
+  author_queue.txt    author works URLs still to process
+  seen_ids.txt        work IDs already in books.jsonl
+  seen_authors.txt    author URLs already scraped
+  tags_cache.jsonl    {id, tags} written progressively during phase 3
+  books.jsonl         final output (tags merged in at end of phase 3)
 """
 
 import json
@@ -56,15 +56,15 @@ log = logging.getLogger(__name__)
 BASE_URL = "https://author.today"
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 
-OUTPUT_FILE     = DATA_DIR / "books.jsonl"
-GENRE_QUEUE     = DATA_DIR / "genre_queue.txt"
-AUTHOR_QUEUE    = DATA_DIR / "author_queue.txt"
-SEEN_IDS_FILE   = DATA_DIR / "seen_ids.txt"
-SEEN_AUTH_FILE  = DATA_DIR / "seen_authors.txt"
+OUTPUT_FILE    = DATA_DIR / "books.jsonl"
+TAGS_CACHE     = DATA_DIR / "tags_cache.jsonl"
+GENRE_QUEUE    = DATA_DIR / "genre_queue.txt"
+AUTHOR_QUEUE   = DATA_DIR / "author_queue.txt"
+SEEN_IDS_FILE  = DATA_DIR / "seen_ids.txt"
+SEEN_AUTH_FILE = DATA_DIR / "seen_authors.txt"
 
-MIN_DELAY   = float(os.environ.get("MIN_DELAY",   "1.5"))
-MAX_DELAY   = float(os.environ.get("MAX_DELAY",   "4.0"))
-DEEP_SCRAPE = os.environ.get("DEEP_SCRAPE", "").lower() in ("1", "true", "yes")
+MIN_DELAY = float(os.environ.get("MIN_DELAY", "1.5"))
+MAX_DELAY = float(os.environ.get("MAX_DELAY", "4.0"))
 
 
 # ---------------------------------------------------------------------------
@@ -107,21 +107,20 @@ def fetch(session: requests.Session, url: str) -> BeautifulSoup | None:
             resp.raise_for_status()
             return BeautifulSoup(resp.text, "lxml")
         except requests.RequestException as exc:
-            log.warning("GET %s attempt %d failed: %s", url, attempt + 1, exc)
+            log.warning("GET %s attempt %d: %s", url, attempt + 1, exc)
             time.sleep(10)
     log.error("GET %s failed after 3 attempts", url)
     return None
 
 
 # ---------------------------------------------------------------------------
-# Queue helpers  (simple flat text files, one URL per line)
+# Queue / seen helpers
 # ---------------------------------------------------------------------------
 
 def queue_load(path: Path) -> list[str]:
     if not path.exists():
         return []
-    lines = path.read_text().splitlines()
-    return [l.strip() for l in lines if l.strip()]
+    return [l.strip() for l in path.read_text().splitlines() if l.strip()]
 
 
 def queue_save(path: Path, items: list[str]):
@@ -132,9 +131,8 @@ def queue_pop(path: Path) -> str | None:
     items = queue_load(path)
     if not items:
         return None
-    url = items[0]
     queue_save(path, items[1:])
-    return url
+    return items[0]
 
 
 def queue_extend(path: Path, new_items: list[str]):
@@ -162,23 +160,19 @@ def seen_add(path: Path, items: list[str]):
 # ---------------------------------------------------------------------------
 
 def fetch_genre_urls(session: requests.Session) -> list[str]:
-    """Scrape /work/genres and return unique genre listing URLs."""
     soup = fetch(session, f"{BASE_URL}/work/genres")
     if not soup:
         return []
-    slugs_seen: set[str] = set()
-    urls = []
+    seen: set[str] = set()
+    urls: list[str] = []
     for a in soup.select("a[href*='/work/genre/']"):
         href = a.get("href", "")
-        # Drop the /all catch-all; we collect per-genre for better coverage
         if "/genre/all" in href or not href:
             continue
-        # Normalise to bare genre slug URL (no sub-type filter)
         slug = href.split("/work/genre/")[1].split("/")[0].split("?")[0]
-        if slug and slug not in slugs_seen:
-            slugs_seen.add(slug)
+        if slug and slug not in seen:
+            seen.add(slug)
             urls.append(f"{BASE_URL}/work/genre/{slug}")
-    # Always include the all-ebook listing as an extra seed
     urls.append(f"{BASE_URL}/work/genre/all/ebook")
     log.info("Discovered %d genre URLs", len(urls))
     return urls
@@ -210,17 +204,14 @@ def _stat_from_hint(card, label: str) -> int | None:
 
 
 def parse_cards(soup: BeautifulSoup) -> tuple[list[dict], list[str]]:
-    """
-    Returns (books, author_urls).
-    author_urls are /u/{slug}/works links found in the cards.
-    """
+    """Returns (books, author_works_urls)."""
     cards = soup.select("div.book-row")
     books, author_urls = [], []
     for card in cards:
         book = _parse_card(card)
         if book:
             books.append(book)
-            author_urls.extend(a["url"] for a in book["authors"] if a["url"])
+            author_urls.extend(a["url"] for a in book["authors"] if a.get("url"))
     return books, author_urls
 
 
@@ -230,56 +221,49 @@ def _parse_card(card) -> dict | None:
         if not cover_a:
             return None
         work_href = cover_a["href"]
-        work_id = work_href.strip("/").split("/")[-1]
-        work_url = _abs(work_href)
+        work_id   = work_href.strip("/").split("/")[-1]
 
-        title_a = card.select_one("div.book-title > a")
-
-        authors = [
+        title_a    = card.select_one("div.book-title > a")
+        authors    = [
             {"name": _text(a), "url": _abs(a["href"])}
             for a in card.select("div.book-author a[href*='/u/']")
         ]
-
         genre_links = card.select("div.book-genres a")
-        work_type = _text(genre_links[0]) if genre_links else None
-        genres    = [_text(a) for a in genre_links[1:]]
-
-        img     = card.select_one("div.cover-image img")
-        status_i = card.select_one("i.book-status-icon")
-        series_a = card.select_one("a[href*='/work/series/']")
-        time_el  = card.select_one("span[data-time]")
-        chars_el = card.select_one("span[data-hint*='кол-во знаков']")
-        price_el = card.select_one("span.text-bold.text-success")
-        access_el = card.select_one("span.text-success:not(.text-bold)")
-        ann_el   = card.select_one(
+        work_type   = _text(genre_links[0]) if genre_links else None
+        genres      = [_text(a) for a in genre_links[1:]]
+        img         = card.select_one("div.cover-image img")
+        status_i    = card.select_one("i.book-status-icon")
+        series_a    = card.select_one("a[href*='/work/series/']")
+        time_el     = card.select_one("span[data-time]")
+        chars_el    = card.select_one("span[data-hint*='кол-во знаков']")
+        price_el    = card.select_one("span.text-bold.text-success")
+        access_el   = card.select_one("span.text-success:not(.text-bold)")
+        ann_el      = card.select_one(
             "div.annotation, div[data-bind*='read-more'].rich-text-content"
         )
 
         return {
-            "id":          work_id,
-            "url":         work_url,
-            "title":       _text(title_a),
-            "authors":     authors,
-            "work_type":   work_type,
-            "genres":      genres,
-            "tags":        [],
-            "status":      _text(status_i.parent) if status_i else None,
-            "series":      {
-                "name": _text(series_a),
-                "url":  _abs(series_a["href"])
-            } if series_a else None,
-            "updated_at":  time_el["data-time"] if time_el else None,
-            "views":       _stat_from_hint(card, "Просмотры"),
-            "likes":       _stat_from_hint(card, "Понравилось"),
-            "comments":    _stat_from_hint(card, "Комментарии"),
-            "reviews":     _stat_from_hint(card, "Рецензии"),
-            "chars":       _text(chars_el),
-            "price":       _text(price_el),
-            "access":      _text(access_el),
-            "exclusive":   bool(card.select_one("div.ribbon")),
-            "cover_url":   img.get("src") if img else None,
-            "annotation":  ann_el.get_text(separator=" ", strip=True) if ann_el else None,
-            "scraped_at":  datetime.now(timezone.utc).isoformat(),
+            "id":         work_id,
+            "url":        _abs(work_href),
+            "title":      _text(title_a),
+            "authors":    authors,
+            "work_type":  work_type,
+            "genres":     genres,
+            "tags":       [],           # filled in Phase 3
+            "status":     _text(status_i.parent) if status_i else None,
+            "series":     {"name": _text(series_a), "url": _abs(series_a["href"])} if series_a else None,
+            "updated_at": time_el["data-time"] if time_el else None,
+            "views":      _stat_from_hint(card, "Просмотры"),
+            "likes":      _stat_from_hint(card, "Понравилось"),
+            "comments":   _stat_from_hint(card, "Комментарии"),
+            "reviews":    _stat_from_hint(card, "Рецензии"),
+            "chars":      _text(chars_el),
+            "price":      _text(price_el),
+            "access":     _text(access_el),
+            "exclusive":  bool(card.select_one("div.ribbon")),
+            "cover_url":  img.get("src") if img else None,
+            "annotation": ann_el.get_text(separator=" ", strip=True) if ann_el else None,
+            "scraped_at": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as exc:
         log.debug("Card parse error: %s", exc, exc_info=True)
@@ -293,8 +277,19 @@ def next_page_url(soup: BeautifulSoup) -> str | None:
     return None
 
 
+def fetch_tags(session: requests.Session, work_id: str) -> list[str]:
+    soup = fetch(session, f"{BASE_URL}/work/{work_id}")
+    if not soup:
+        return []
+    return [
+        a.get("title") or _text(a)
+        for a in soup.select("span.tags a[href*='/work/tag/']")
+        if a.get("title") or _text(a)
+    ]
+
+
 # ---------------------------------------------------------------------------
-# Save helpers
+# Output helpers
 # ---------------------------------------------------------------------------
 
 def save_new_books(books: list[dict], seen_ids: set[str]) -> list[dict]:
@@ -310,44 +305,7 @@ def save_new_books(books: list[dict], seen_ids: set[str]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Tags (optional deep scrape)
-# ---------------------------------------------------------------------------
-
-def fetch_tags(session: requests.Session, work_id: str) -> list[str]:
-    soup = fetch(session, f"{BASE_URL}/work/{work_id}")
-    if not soup:
-        return []
-    return [
-        a.get("title") or _text(a)
-        for a in soup.select("span.tags a[href*='/work/tag/']")
-        if a.get("title") or _text(a)
-    ]
-
-
-def run_deep_scrape(session: requests.Session, seen_ids: set[str]):
-    log.info("Deep scrape: enriching %d books with tags", len(seen_ids))
-    books: dict[str, dict] = {}
-    with open(OUTPUT_FILE, encoding="utf-8") as f:
-        for line in f:
-            b = json.loads(line)
-            books[b["id"]] = b
-
-    for i, (work_id, book) in enumerate(books.items(), 1):
-        if book.get("tags"):
-            continue
-        book["tags"] = fetch_tags(session, work_id)
-        if i % 100 == 0:
-            log.info("  tags: %d / %d", i, len(books))
-        time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
-
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        for b in books.values():
-            f.write(json.dumps(b, ensure_ascii=False) + "\n")
-    log.info("Deep scrape complete.")
-
-
-# ---------------------------------------------------------------------------
-# Core scrape loop  (shared by genre listings and author works pages)
+# Core listing loop  (shared by genre and author pages)
 # ---------------------------------------------------------------------------
 
 def scrape_listing(
@@ -355,13 +313,9 @@ def scrape_listing(
     start_url: str,
     seen_ids: set[str],
     label: str,
-) -> tuple[int, list[str]]:
-    """
-    Paginate through all pages of a listing URL.
-    Returns (new_books_count, discovered_author_urls).
-    """
+) -> list[str]:
+    """Paginate a listing URL. Returns all author_urls discovered."""
     url = start_url
-    total_new = 0
     all_author_urls: list[str] = []
     page = 0
 
@@ -370,23 +324,68 @@ def scrape_listing(
         soup = fetch(session, url)
         if not soup:
             break
-
         books, author_urls = parse_cards(soup)
         if not books:
-            log.warning("[%s] p%d — no cards found, stopping", label, page)
+            log.warning("[%s] p%d — no cards, stopping", label, page)
             break
-
         new = save_new_books(books, seen_ids)
-        total_new += len(new)
         all_author_urls.extend(author_urls)
-
-        log.info("[%s] p%d — %d new (total saved: %d)", label, page, len(new), total_new)
-
+        log.info("[%s] p%d — %d new books (total: %d)", label, page, len(new), len(seen_ids))
         url = next_page_url(soup)
         if url:
             time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
 
-    return total_new, all_author_urls
+    return all_author_urls
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 — Tag scraping
+# ---------------------------------------------------------------------------
+
+def run_tag_scrape(session: requests.Session, seen_ids: set[str]):
+    # Load already-fetched tags from the cache (restart-safe)
+    tags_map: dict[str, list[str]] = {}
+    if TAGS_CACHE.exists():
+        with open(TAGS_CACHE, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    entry = json.loads(line)
+                    tags_map[entry["id"]] = entry["tags"]
+
+    remaining = [wid for wid in seen_ids if wid not in tags_map]
+    log.info(
+        "Phase 3: %d books need tags (%d already cached)",
+        len(remaining), len(tags_map),
+    )
+
+    with open(TAGS_CACHE, "a", encoding="utf-8") as cache_f:
+        for i, work_id in enumerate(remaining, 1):
+            tags = fetch_tags(session, work_id)
+            tags_map[work_id] = tags
+            cache_f.write(json.dumps({"id": work_id, "tags": tags}, ensure_ascii=False) + "\n")
+            cache_f.flush()
+
+            if i % 500 == 0:
+                log.info("  tags: %d / %d fetched", i, len(remaining))
+
+            time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+
+    log.info("All tags fetched. Merging into books.jsonl …")
+
+    tmp = OUTPUT_FILE.with_suffix(".tmp")
+    with open(OUTPUT_FILE, encoding="utf-8") as fin, \
+         open(tmp, "w", encoding="utf-8") as fout:
+        for line in fin:
+            line = line.strip()
+            if not line:
+                continue
+            book = json.loads(line)
+            book["tags"] = tags_map.get(book["id"], [])
+            fout.write(json.dumps(book, ensure_ascii=False) + "\n")
+
+    tmp.replace(OUTPUT_FILE)
+    log.info("Phase 3 complete. books.jsonl now includes tags.")
 
 
 # ---------------------------------------------------------------------------
@@ -395,45 +394,40 @@ def scrape_listing(
 
 def main():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    session  = make_session()
+    session   = make_session()
     seen_ids  = seen_load(SEEN_IDS_FILE)
     seen_auth = seen_load(SEEN_AUTH_FILE)
 
-    log.info("Resuming with %d known books, %d known authors", len(seen_ids), len(seen_auth))
+    log.info("State: %d books, %d authors already done", len(seen_ids), len(seen_auth))
 
     # ── Phase 1: Genre listings ──────────────────────────────────────────────
 
     if not GENRE_QUEUE.exists():
-        log.info("Seeding genre queue from /work/genres …")
-        genre_urls = fetch_genre_urls(session)
-        queue_save(GENRE_QUEUE, genre_urls)
+        log.info("Seeding genre queue …")
+        queue_save(GENRE_QUEUE, fetch_genre_urls(session))
         time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
 
-    genre_total = len(queue_load(GENRE_QUEUE))
-    log.info("Phase 1: %d genres to scrape", genre_total)
+    log.info("Phase 1: %d genres to scrape", len(queue_load(GENRE_QUEUE)))
 
     while True:
         genre_url = queue_pop(GENRE_QUEUE)
         if not genre_url:
             break
-        remaining = len(queue_load(GENRE_QUEUE))
-        log.info("Genre: %s  (%d remaining)", genre_url, remaining)
-        _, author_urls = scrape_listing(session, genre_url, seen_ids, label="genre")
+        log.info("Genre: %s  (%d left)", genre_url, len(queue_load(GENRE_QUEUE)))
+        author_urls = scrape_listing(session, genre_url, seen_ids, label="genre")
 
-        # Enqueue new authors discovered from this genre
         new_authors = [u for u in set(author_urls) if u not in seen_auth]
         if new_authors:
             queue_extend(AUTHOR_QUEUE, new_authors)
-            log.info("  → queued %d new author URLs", len(new_authors))
+            log.info("  → queued %d new authors", len(new_authors))
 
         time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
 
-    log.info("Phase 1 complete. Books saved: %d", len(seen_ids))
+    log.info("Phase 1 complete. Books: %d", len(seen_ids))
 
     # ── Phase 2: Author works pages ──────────────────────────────────────────
 
-    author_total = len(queue_load(AUTHOR_QUEUE))
-    log.info("Phase 2: %d author pages to scrape", author_total)
+    log.info("Phase 2: %d author pages to scrape", len(queue_load(AUTHOR_QUEUE)))
 
     while True:
         author_url = queue_pop(AUTHOR_QUEUE)
@@ -441,21 +435,19 @@ def main():
             break
         if author_url in seen_auth:
             continue
-        remaining = len(queue_load(AUTHOR_QUEUE))
-        log.info("Author: %s  (%d remaining)", author_url, remaining)
+        log.info("Author: %s  (%d left)", author_url, len(queue_load(AUTHOR_QUEUE)))
         scrape_listing(session, author_url, seen_ids, label="author")
         seen_add(SEEN_AUTH_FILE, [author_url])
         seen_auth.add(author_url)
         time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
 
-    log.info("Phase 2 complete. Books saved: %d", len(seen_ids))
+    log.info("Phase 2 complete. Books: %d", len(seen_ids))
 
-    # ── Phase 3: Tags (optional) ─────────────────────────────────────────────
+    # ── Phase 3: Tags ────────────────────────────────────────────────────────
 
-    if DEEP_SCRAPE:
-        run_deep_scrape(session, seen_ids)
+    run_tag_scrape(session, seen_ids)
 
-    log.info("All done. Total books: %d", len(seen_ids))
+    log.info("All done. Total books with tags: %d", len(seen_ids))
 
 
 if __name__ == "__main__":
