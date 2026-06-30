@@ -108,8 +108,8 @@ def fetch(session: requests.Session, url: str) -> tuple[int, BeautifulSoup | Non
     for attempt in range(3):
         try:
             resp = session.get(url, timeout=30)
-            if resp.status_code == 404:
-                return 404, None, url
+            if resp.status_code in (404, 403):
+                return resp.status_code, None, url
             if resp.status_code == 429:
                 wait = 60 * (attempt + 1)
                 log.warning("Rate-limited, waiting %ds", wait)
@@ -303,7 +303,7 @@ def parse_author_profile(soup: BeautifulSoup, works_url: str) -> dict | None:
 def load_progress() -> dict:
     if PROGRESS_FILE.exists():
         return json.loads(PROGRESS_FILE.read_text())
-    return {"last_id": 0, "books_scraped": 0, "skipped": 0}
+    return {"last_id": 0, "books_scraped": 0, "skipped": 0, "restricted": 0}
 
 
 def save_progress(p: dict):
@@ -356,10 +356,11 @@ def main():
     start_id      = progress["last_id"] + 1
     books_scraped = progress["books_scraped"]
     skipped       = progress["skipped"]
+    restricted    = progress.get("restricted", 0)
 
     log.info(
-        "Phase 1: IDs %d → %d  (%d books so far, %d skipped)",
-        start_id, MAX_ID, books_scraped, skipped,
+        "Phase 1: IDs %d → %d  (%d books, %d skipped, %d restricted)",
+        start_id, MAX_ID, books_scraped, skipped, restricted,
     )
 
     # ── Phase 1: Iterate work IDs ────────────────────────────────────────────
@@ -372,15 +373,18 @@ def main():
 
         if status == 404:
             skipped += 1
-            # No delay for 404 — cheap for both sides
-            if work_id % 1000 == 0:
-                log.info("ID %d — %d books, %d skipped", work_id, books_scraped, skipped)
-            save_progress({"last_id": work_id, "books_scraped": books_scraped, "skipped": skipped})
+            save_progress({"last_id": work_id, "books_scraped": books_scraped, "skipped": skipped, "restricted": restricted})
+            continue
+
+        if status == 403:
+            # Work exists but is restricted to author's friends — skip instantly, no delay
+            restricted += 1
+            save_progress({"last_id": work_id, "books_scraped": books_scraped, "skipped": skipped, "restricted": restricted})
             continue
 
         if status != 200 or soup is None:
-            log.warning("ID %d → status %d, skipping", work_id, status)
-            save_progress({"last_id": work_id, "books_scraped": books_scraped, "skipped": skipped})
+            log.warning("ID %d → status %d", work_id, status)
+            save_progress({"last_id": work_id, "books_scraped": books_scraped, "skipped": skipped, "restricted": restricted})
             time.sleep(5)
             continue
 
@@ -402,10 +406,10 @@ def main():
             queue_extend(AUTHOR_QUEUE, new)
             author_urls_batch = []
 
-        if books_scraped % 500 == 0:
-            log.info("ID %d — %d books scraped, %d skipped", work_id, books_scraped, skipped)
+        if books_scraped % 100 == 0:
+            log.info("ID %d — %d books, %d skipped, %d restricted", work_id, books_scraped, skipped, restricted)
 
-        save_progress({"last_id": work_id, "books_scraped": books_scraped, "skipped": skipped})
+        save_progress({"last_id": work_id, "books_scraped": books_scraped, "skipped": skipped, "restricted": restricted})
         time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
 
     # Flush remaining author URLs
@@ -413,7 +417,7 @@ def main():
         new = [u for u in set(author_urls_batch) if u not in seen_auth]
         queue_extend(AUTHOR_QUEUE, new)
 
-    log.info("Phase 1 complete. Books: %d, Skipped: %d", books_scraped, skipped)
+    log.info("Phase 1 complete. Books: %d, Skipped: %d, Restricted: %d", books_scraped, skipped, restricted)
 
     # ── Phase 2: Author profiles ─────────────────────────────────────────────
 
