@@ -27,6 +27,7 @@ State files (all in /data):
   seen_authors.txt    author URLs already scraped
   tags_cache.jsonl    {id, tags} written progressively during phase 3
   books.jsonl         final output (tags merged in at end of phase 3)
+  authors.jsonl       one author profile per line, written during phase 2
 """
 
 import json
@@ -57,6 +58,7 @@ BASE_URL = "https://author.today"
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 
 OUTPUT_FILE    = DATA_DIR / "books.jsonl"
+AUTHORS_FILE   = DATA_DIR / "authors.jsonl"
 TAGS_CACHE     = DATA_DIR / "tags_cache.jsonl"
 GENRE_QUEUE    = DATA_DIR / "genre_queue.txt"
 AUTHOR_QUEUE   = DATA_DIR / "author_queue.txt"
@@ -203,6 +205,58 @@ def _stat_from_hint(card, label: str) -> int | None:
     return None
 
 
+def _nav_count(soup: BeautifulSoup, href_suffix: str) -> int | None:
+    el = soup.select_one(f"a[href*='{href_suffix}'] .nav-value")
+    if not el:
+        return None
+    try:
+        return int(el.get_text(strip=True).replace("\xa0", "").replace(" ", "").replace(" ", ""))
+    except ValueError:
+        return None
+
+
+def parse_author_profile(soup: BeautifulSoup, works_url: str) -> dict | None:
+    try:
+        slug = works_url.rstrip("/").split("/u/")[1].split("/")[0]
+
+        name_el = soup.select_one(".profile-name h1 a, .profile-name h1")
+        photo_el = soup.select_one("img.avatar")
+        motto_el = soup.select_one(".profile-status span")
+
+        uid_m = re.search(r"userId:\s*(\d+)", str(soup))
+
+        last_active = None
+        act = soup.select_one(".activity-status")
+        if act:
+            el = act.find_next("span", attrs={"data-time": True})
+            if el:
+                last_active = el.get("data-time")
+
+        return {
+            "slug":                slug,
+            "user_id":             uid_m.group(1) if uid_m else None,
+            "url":                 works_url,
+            "name":                _text(name_el),
+            "photo_url":           photo_el.get("src") if photo_el else None,
+            "motto":               _text(motto_el),
+            "reputation_dynamic":  _stat_from_hint(soup, "Динамическая репутация"),
+            "reputation_absolute": _stat_from_hint(soup, "Абсолютная репутация"),
+            "rating_dynamic":      _stat_from_hint(soup, "Динамический рейтинг автора"),
+            "rating_absolute":     _stat_from_hint(soup, "Абсолютный рейтинг автора"),
+            "series_count":        _nav_count(soup, "/series"),
+            "followers":           _nav_count(soup, "/followers"),
+            "following":           _nav_count(soup, "/following"),
+            "friends":             _nav_count(soup, "/friends"),
+            "achievements":        _nav_count(soup, "/awards"),
+            "comments_count":      _nav_count(soup, "/comments"),
+            "last_active_at":      last_active,
+            "scraped_at":          datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:
+        log.debug("Author profile parse error for %s: %s", works_url, exc)
+        return None
+
+
 def parse_cards(soup: BeautifulSoup) -> tuple[list[dict], list[str]]:
     """Returns (books, author_works_urls)."""
     cards = soup.select("div.book-row")
@@ -291,6 +345,11 @@ def fetch_tags(session: requests.Session, work_id: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
+
+def save_author(profile: dict):
+    with open(AUTHORS_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(profile, ensure_ascii=False) + "\n")
+
 
 def save_new_books(books: list[dict], seen_ids: set[str]) -> list[dict]:
     new = [b for b in books if b["id"] not in seen_ids]
@@ -435,13 +494,37 @@ def main():
             break
         if author_url in seen_auth:
             continue
+
         log.info("Author: %s  (%d left)", author_url, len(queue_load(AUTHOR_QUEUE)))
-        scrape_listing(session, author_url, seen_ids, label="author")
+
+        # Fetch first page — extract profile + first batch of books
+        soup = fetch(session, author_url)
+        if soup:
+            profile = parse_author_profile(soup, author_url)
+            if profile:
+                save_author(profile)
+
+            books, _ = parse_cards(soup)
+            new = save_new_books(books, seen_ids)
+            log.info("  profile saved, %d new books", len(new))
+
+            # Paginate remaining pages
+            next_url = next_page_url(soup)
+            while next_url:
+                time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+                soup = fetch(session, next_url)
+                if not soup:
+                    break
+                books, _ = parse_cards(soup)
+                new = save_new_books(books, seen_ids)
+                log.info("  p+ %d new books (total: %d)", len(new), len(seen_ids))
+                next_url = next_page_url(soup)
+
         seen_add(SEEN_AUTH_FILE, [author_url])
         seen_auth.add(author_url)
         time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
 
-    log.info("Phase 2 complete. Books: %d", len(seen_ids))
+    log.info("Phase 2 complete. Books: %d, Authors: %d", len(seen_ids), len(seen_auth))
 
     # ── Phase 3: Tags ────────────────────────────────────────────────────────
 
