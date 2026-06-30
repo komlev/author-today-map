@@ -33,6 +33,7 @@ State files (DATA_DIR):
   progress.json     last processed ID + counters
   author_queue.txt  author works URLs to scrape in Phase 2
   seen_authors.txt  author URLs already scraped
+  retry_queue.txt   work IDs that returned 5xx (retried after Phase 1)
   books.jsonl       one book per line
   authors.jsonl     one author profile per line
 """
@@ -69,6 +70,7 @@ AUTHORS_FILE   = DATA_DIR / "authors.jsonl"
 PROGRESS_FILE  = DATA_DIR / "progress.json"
 AUTHOR_QUEUE   = DATA_DIR / "author_queue.txt"
 SEEN_AUTH_FILE = DATA_DIR / "seen_authors.txt"
+RETRY_FILE     = DATA_DIR / "retry_queue.txt"
 
 MAX_ID    = int(os.environ.get("MAX_ID", "614627"))
 MIN_DELAY = float(os.environ.get("MIN_DELAY", "1.5"))
@@ -384,6 +386,9 @@ def main():
 
         if status != 200 or soup is None:
             log.warning("ID %d → status %d", work_id, status)
+            if status >= 500:
+                with open(RETRY_FILE, "a") as f:
+                    f.write(f"{work_id}\n")
             save_progress({"last_id": work_id, "books_scraped": books_scraped, "skipped": skipped, "restricted": restricted})
             time.sleep(5)
             continue
@@ -418,6 +423,34 @@ def main():
         queue_extend(AUTHOR_QUEUE, new)
 
     log.info("Phase 1 complete. Books: %d, Skipped: %d, Restricted: %d", books_scraped, skipped, restricted)
+
+    # ── Phase 1b: Retry transient errors (5xx) ───────────────────────────────
+
+    retry_ids = [int(x) for x in queue_load(RETRY_FILE) if x.strip().isdigit()]
+    if retry_ids:
+        log.info("Phase 1b: retrying %d IDs that returned 5xx", len(retry_ids))
+        RETRY_FILE.unlink(missing_ok=True)
+        still_failed: list[str] = []
+        for work_id in retry_ids:
+            url = f"{BASE_URL}/work/{work_id}"
+            status, soup, final_url = fetch(session, url)
+            if status == 200 and soup:
+                book = parse_book_page(soup, str(work_id), final_url)
+                if book:
+                    with open(BOOKS_FILE, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(book, ensure_ascii=False) + "\n")
+                    books_scraped += 1
+                    author_urls_batch.extend(a["url"] for a in book["authors"] if a.get("url"))
+            elif status >= 500:
+                still_failed.append(str(work_id))
+            time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+        if still_failed:
+            RETRY_FILE.write_text("\n".join(still_failed) + "\n")
+            log.warning("Phase 1b: %d IDs still failing after retry", len(still_failed))
+        if author_urls_batch:
+            new = [u for u in set(author_urls_batch) if u not in seen_auth]
+            queue_extend(AUTHOR_QUEUE, new)
+            author_urls_batch = []
 
     # ── Phase 2: Author profiles ─────────────────────────────────────────────
 
