@@ -6,7 +6,7 @@ author.today uses auto-incremental work IDs starting from 1.
 Current maximum is ~614 627. We iterate every ID, skip 404s fast,
 and parse full data (including tags) from each valid page in one pass.
 
-Two phases:
+Three phases:
 
   Phase 1 — Work pages  (/work/1 … /work/MAX_ID)
     ~50% return 404 (deleted/unpublished) — skipped instantly, no delay.
@@ -18,8 +18,16 @@ Two phases:
     Author URLs collected during Phase 1. Each page yields the full
     author profile. Output: authors.jsonl
 
-Both phases are resumable: restart picks up from last processed ID
-(Phase 1) or remaining author queue (Phase 2).
+  Phase 3 — Social graph  (/u/{slug}/friends, /u/{slug}/following)
+    Every author seen in Phase 2. Paginated profile-card lists yield
+    friend/following edges. Output: social_edges.jsonl
+    /followers is deliberately not scraped — every follow edge already
+    appears in the followee's own /following list, and a popular
+    author's /followers list alone can run to 100+ paginated requests.
+
+All three phases are resumable: restart picks up from last processed ID
+(Phase 1), remaining author queue (Phase 2), or remaining social queue
+(Phase 3).
 
 Env vars:
   COOKIES   — full browser Cookie header value (required)
@@ -30,12 +38,14 @@ Env vars:
   DEBUG     — set to 1 for verbose logging
 
 State files (DATA_DIR):
-  progress.json     last processed ID + counters
-  author_queue.txt  author works URLs to scrape in Phase 2
-  seen_authors.txt  author URLs already scraped
-  retry_queue.txt   work IDs that returned 5xx (retried after Phase 1)
-  books.jsonl       one book per line
-  authors.jsonl     one author profile per line
+  progress.json      last processed ID + counters
+  author_queue.txt   author works URLs to scrape in Phase 2
+  seen_authors.txt   author URLs already scraped (Phase 2)
+  seen_social.txt    author URLs whose friends/following are scraped (Phase 3)
+  retry_queue.txt    work IDs that returned 5xx (retried after Phase 1)
+  books.jsonl        one book per line
+  authors.jsonl      one author profile per line
+  social_edges.jsonl one friend/following edge per line
 """
 
 import json
@@ -65,12 +75,14 @@ log = logging.getLogger(__name__)
 BASE_URL = "https://author.today"
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 
-BOOKS_FILE     = DATA_DIR / "books.jsonl"
-AUTHORS_FILE   = DATA_DIR / "authors.jsonl"
-PROGRESS_FILE  = DATA_DIR / "progress.json"
-AUTHOR_QUEUE   = DATA_DIR / "author_queue.txt"
-SEEN_AUTH_FILE = DATA_DIR / "seen_authors.txt"
-RETRY_FILE     = DATA_DIR / "retry_queue.txt"
+BOOKS_FILE       = DATA_DIR / "books.jsonl"
+AUTHORS_FILE     = DATA_DIR / "authors.jsonl"
+PROGRESS_FILE    = DATA_DIR / "progress.json"
+AUTHOR_QUEUE     = DATA_DIR / "author_queue.txt"
+SEEN_AUTH_FILE   = DATA_DIR / "seen_authors.txt"
+RETRY_FILE       = DATA_DIR / "retry_queue.txt"
+SOCIAL_FILE      = DATA_DIR / "social_edges.jsonl"
+SEEN_SOCIAL_FILE = DATA_DIR / "seen_social.txt"
 
 MAX_ID    = int(os.environ.get("MAX_ID", "614627"))
 MIN_DELAY = float(os.environ.get("MIN_DELAY", "1.5"))
@@ -109,7 +121,7 @@ def fetch(session: requests.Session, url: str) -> tuple[int, BeautifulSoup | Non
     """Returns (status_code, soup, final_url). soup is None on non-200 or error."""
     for attempt in range(3):
         try:
-            resp = session.get(url, timeout=30)
+            resp = session.get(url, timeout=15)
             if resp.status_code in (404, 403):
                 return resp.status_code, None, url
             if resp.status_code == 429:
@@ -299,6 +311,68 @@ def parse_author_profile(soup: BeautifulSoup, works_url: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Social graph — /u/{slug}/friends and /u/{slug}/following (paginated)
+# ---------------------------------------------------------------------------
+
+def _parse_count(text: str) -> int | None:
+    """Parse a stat like '1 792', '53', or the abbreviated '16K' into an int."""
+    text = text.strip().replace("\xa0", "").replace(" ", "")
+    m = re.match(r"^(\d+(?:\.\d+)?)([KM]?)$", text, re.IGNORECASE)
+    if not m:
+        return None
+    value = float(m.group(1))
+    suffix = m.group(2).upper()
+    if suffix == "K":
+        value *= 1_000
+    elif suffix == "M":
+        value *= 1_000_000
+    return int(value)
+
+
+def _card_stat(card, hint_prefix: str) -> int | None:
+    el = card.select_one(f"span[data-hint^='{hint_prefix}']")
+    return _parse_count(el.get_text()) if el else None
+
+
+def parse_profile_cards(soup: BeautifulSoup) -> list[dict]:
+    """Parse the .profile-card entries on a /friends or /following page."""
+    cards = []
+    for card in soup.select("div.profile-card"):
+        name_a = card.select_one("a.profile-name")
+        if not name_a or not name_a.get("href"):
+            continue
+        slug = name_a["href"].rstrip("/").split("/u/")[-1]
+        motto_el = card.select_one(".profile-status")
+        cards.append({
+            "slug":            slug,
+            "url":             f"{BASE_URL}/u/{slug}/works",
+            "name":            _text(name_a),
+            "motto":           _text(motto_el),
+            "rating_dynamic":  _card_stat(card, "Динамический рейтинг автора"),
+            "works_count":     _card_stat(card, "Произведений"),
+        })
+    return cards
+
+
+def fetch_social_list(session: requests.Session, slug: str, kind: str) -> list[dict]:
+    """Fetch all pages of /u/{slug}/{kind} (kind = 'friends' or 'following')."""
+    all_cards: list[dict] = []
+    page = 1
+    while page <= 500:  # safety cap; real lists end long before this
+        url = f"{BASE_URL}/u/{slug}/{kind}" + (f"?page={page}" if page > 1 else "")
+        status, soup, _ = fetch(session, url)
+        if status != 200 or soup is None:
+            break
+        cards = parse_profile_cards(soup)
+        if not cards:
+            break
+        all_cards.extend(cards)
+        page += 1
+        time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+    return all_cards
+
+
+# ---------------------------------------------------------------------------
 # Queue / progress helpers
 # ---------------------------------------------------------------------------
 
@@ -386,7 +460,7 @@ def main():
 
         if status != 200 or soup is None:
             log.warning("ID %d → status %d", work_id, status)
-            if status >= 500:
+            if status >= 500 or status == 0:
                 with open(RETRY_FILE, "a") as f:
                     f.write(f"{work_id}\n")
             save_progress({"last_id": work_id, "books_scraped": books_scraped, "skipped": skipped, "restricted": restricted})
@@ -480,6 +554,41 @@ def main():
             log.info("Authors remaining: %d", remaining)
 
         time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+
+    # ── Phase 3: Social graph — friends & following ──────────────────────────
+    # Followers lists are deliberately not scraped here: every "A follows B"
+    # edge already shows up when we scrape B's own /following list, and a
+    # popular author's /followers list alone can run to 100+ paginated
+    # requests. The follower *count* (already in authors.jsonl from Phase 2)
+    # covers "most followed" leaderboards without that cost.
+
+    seen_social = seen_load(SEEN_SOCIAL_FILE)
+    social_targets = [u for u in seen_auth if u not in seen_social]
+    log.info("Phase 3: %d authors' friends/following to scrape", len(social_targets))
+
+    for i, author_url in enumerate(social_targets, start=1):
+        slug = author_url.rstrip("/").split("/u/")[1].split("/")[0]
+
+        for kind in ("friends", "following"):
+            for card in fetch_social_list(session, slug, kind):
+                edge = {
+                    "from_slug":  slug,
+                    "from_url":   author_url,
+                    "type":       kind,
+                    "to_slug":    card["slug"],
+                    "to_url":     card["url"],
+                    "to_name":    card["name"],
+                    "scraped_at": datetime.now(timezone.utc).isoformat(),
+                }
+                with open(SOCIAL_FILE, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(edge, ensure_ascii=False) + "\n")
+            time.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+
+        seen_add(SEEN_SOCIAL_FILE, author_url)
+        seen_social.add(author_url)
+
+        if i % 500 == 0:
+            log.info("Phase 3: %d/%d authors processed", i, len(social_targets))
 
     log.info("All done. Books: %d, Authors: %d", books_scraped, len(seen_auth))
 
