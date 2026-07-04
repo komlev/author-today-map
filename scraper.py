@@ -3,7 +3,7 @@
 author.today scraper — ID iteration strategy.
 
 author.today uses auto-incremental work IDs starting from 1.
-Current maximum is ~614 627. We iterate every ID, skip 404s fast,
+Current maximum is ~616 731. We iterate every ID, skip 404s fast,
 and parse full data (including tags) from each valid page in one pass.
 
 Three phases:
@@ -31,7 +31,7 @@ All three phases are resumable: restart picks up from last processed ID
 
 Env vars:
   COOKIES   — full browser Cookie header value (required)
-  MAX_ID    — highest work ID to scrape (default 614627)
+  MAX_ID    — highest work ID to scrape (default 616731)
   MIN_DELAY — seconds between successful fetches (default 1.5)
   MAX_DELAY — seconds between successful fetches (default 4.0)
   DATA_DIR  — output directory (default /data)
@@ -84,7 +84,7 @@ RETRY_FILE       = DATA_DIR / "retry_queue.txt"
 SOCIAL_FILE      = DATA_DIR / "social_edges.jsonl"
 SEEN_SOCIAL_FILE = DATA_DIR / "seen_social.txt"
 
-MAX_ID    = int(os.environ.get("MAX_ID", "614627"))
+MAX_ID    = int(os.environ.get("MAX_ID", "616731"))
 MIN_DELAY = float(os.environ.get("MIN_DELAY", "1.5"))
 MAX_DELAY = float(os.environ.get("MAX_DELAY", "4.0"))
 
