@@ -11,7 +11,9 @@ Three phases:
   Phase 1 — Work pages  (/work/1 … /work/MAX_ID)
     ~50% return 404 (deleted/unpublished) — skipped instantly, no delay.
     Valid pages yield: title, authors, genres, tags, status, series,
-    views, likes, comments, chars, annotation, cover, updated_at.
+    views, likes, rewards_count, reviews_count, comments, chars,
+    annotation, cover, updated_at. comments requires one extra AJAX
+    request per book (not present in the static page).
     Output: books.jsonl
 
   Phase 2 — Author profiles  (/u/{slug}/works)
@@ -164,6 +166,51 @@ def fetch(session: requests.Session, url: str) -> tuple[int, BeautifulSoup | Non
     return 0, None, url
 
 
+def fetch_comment_count(session: requests.Session, work_id: str) -> int | None:
+    """Comment count is filled in client-side via this same AJAX endpoint (found in the
+    site's JS bundle: AjaxUtils.get("comment/load", {rootId, rootType, page: 1, ...}) →
+    resp.data.totalCount) — not present anywhere in the static /work/{id} HTML."""
+    try:
+        resp = session.get(
+            f"{BASE_URL}/comment/load",
+            params={"rootId": work_id, "rootType": 1, "page": 1},
+            headers={"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return None
+        return resp.json()["data"]["totalCount"]
+    except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+        log.debug("Comment count fetch failed for %s: %s", work_id, exc)
+        return None
+
+
+def fetch_library_stats(session: requests.Session, work_id: str) -> dict | None:
+    """Library-shelf stats (how many readers added/are reading/saved/finished/disliked
+    the book) — same async widget pattern as comments: rendered via a separate endpoint,
+    not present in the static /work/{id} HTML."""
+    try:
+        resp = session.get(
+            f"{BASE_URL}/work/work-stats",
+            params={"workId": work_id},
+            headers={"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json()["data"]
+        return {
+            "total":    data["totalCount"],
+            "reading":  data["readingCount"],
+            "saved":    data["savedCount"],
+            "finished": data["finishedCount"],
+            "disliked": data["dislikedCount"],
+        }
+    except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
+        log.debug("Library stats fetch failed for %s: %s", work_id, exc)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Book page parser
 # ---------------------------------------------------------------------------
@@ -266,8 +313,14 @@ def parse_book_page(soup: BeautifulSoup, work_id: str, final_url: str) -> dict |
         chars_raw = _text(chars_el)
         chars     = int(re.sub(r"[^\d]", "", chars_raw)) if chars_raw else None
 
-        # Comments count is JS-rendered on detail pages — not available in static HTML
+        # Comment count is JS-rendered on detail pages (placeholder "0" in static HTML) —
+        # filled in separately after this parse via fetch_comment_count()
         comments = None
+
+        # Reviews count, unlike comments, IS server-rendered in the nav tab text
+        reviews_el   = soup.select_one("a[href$='/reviews']")
+        reviews_text = _text(reviews_el)
+        reviews_count = int(re.sub(r"[^\d]", "", reviews_text)) if reviews_text else None
 
         # Likes — in KnockoutJS component comment
         likes_m = re.search(r"likeCount:\s*(\d+)", str(soup))
@@ -275,6 +328,29 @@ def parse_book_page(soup: BeautifulSoup, work_id: str, final_url: str) -> dict |
 
         exclusive   = bool(soup.select_one("div.ribbon"))
         ai_generated = bool(soup.select_one(".text-neural-networks, .icon-neural-networks"))
+
+        # Rewards (reader-gifted "Награды") count — button is absent entirely when rewards
+        # are disabled for the book, not just when the count is 0
+        reward_btn   = soup.select_one("button.btn-reward:not(.btn-reward-aside)")
+        reward_text  = _text(reward_btn)
+        rewards_count = int(re.sub(r"[^\d]", "", reward_text)) if reward_text else None
+
+        # Downloads ("Скачали") — server-rendered plain text, unlike the sibling
+        # library-shelf rows in the same details panel which are KnockoutJS-bound.
+        # Row is absent entirely for books that don't allow downloads.
+        downloads_count = None
+        for row in soup.select("div.book-details-row"):
+            label = row.select_one(".col-1")
+            if label and "Скачали" in _text(label):
+                value_el = row.select_one(".col-2")
+                value_text = _text(value_el)
+                downloads_count = int(re.sub(r"[^\d]", "", value_text)) if value_text else None
+                break
+
+        # Library-shelf stats (total/reading/saved/finished/disliked) are JS-rendered via
+        # a separate endpoint (like `comments`) — filled in after this parse via
+        # fetch_library_stats()
+        library_stats = None
 
         return {
             "id":           work_id,
@@ -290,6 +366,10 @@ def parse_book_page(soup: BeautifulSoup, work_id: str, final_url: str) -> dict |
             "updated_at":   time_el["data-time"] if time_el else None,
             "views":        _hint_int(soup, "Просмотры"),
             "likes":        likes,
+            "rewards_count": rewards_count,
+            "reviews_count": reviews_count,
+            "downloads_count": downloads_count,
+            "library_stats": library_stats,
             "comments":     comments,
             "chars":        chars,
             "exclusive":    exclusive,
@@ -530,6 +610,12 @@ def main():
             save_progress({"last_id": work_id, "books_scraped": books_scraped, "skipped": skipped})
             continue
 
+        time.sleep(random.uniform(MIN_DELAY, MAX_DELAY) / 2)
+        book["comments"] = fetch_comment_count(session, str(work_id))
+
+        time.sleep(random.uniform(MIN_DELAY, MAX_DELAY) / 2)
+        book["library_stats"] = fetch_library_stats(session, str(work_id))
+
         with open(BOOKS_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(book, ensure_ascii=False) + "\n")
 
@@ -568,6 +654,10 @@ def main():
             if status == 200 and soup:
                 book = parse_book_page(soup, str(work_id), final_url)
                 if book:
+                    time.sleep(random.uniform(MIN_DELAY, MAX_DELAY) / 2)
+                    book["comments"] = fetch_comment_count(session, str(work_id))
+                    time.sleep(random.uniform(MIN_DELAY, MAX_DELAY) / 2)
+                    book["library_stats"] = fetch_library_stats(session, str(work_id))
                     with open(BOOKS_FILE, "a", encoding="utf-8") as f:
                         f.write(json.dumps(book, ensure_ascii=False) + "\n")
                     books_scraped += 1

@@ -35,6 +35,18 @@ services:
     entrypoint: ["python", "scripts/fix_authors.py"]
     restart: "no"
 
+  backfill-stats:
+    build: .
+    volumes:
+      - scraper-data:/data
+    environment:
+      - COOKIES=${COOKIES}
+      - MIN_DELAY=${MIN_DELAY:-1.5}
+      - MAX_DELAY=${MAX_DELAY:-4.0}
+      - DEBUG=${DEBUG:-}
+    entrypoint: ["python", "scripts/backfill_stats.py"]
+    restart: "no"
+
   # Regenerates authors_from_books.jsonl from books.jsonl — the viz build's
   # author-level data loaders read this, so it needs to exist in the volume
   # before viz-build can succeed. Rerun after scraping picks up enough new
