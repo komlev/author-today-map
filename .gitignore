@@ -1,4 +1,4 @@
 cookies.env
-data/
+/data/
 *.pyc
 __pycache__/
