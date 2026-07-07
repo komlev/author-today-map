@@ -54,6 +54,7 @@ for book in reversed(books):
     book["estimated_created_at"] = running_min
 
 months = defaultdict(lambda: {"count": 0, "ai_generated": 0, "exclusive": 0, "chars": 0})
+days = defaultdict(lambda: {"count": 0, "ai_generated": 0, "non_ai": 0})
 
 for book in books:
     month_key = book["estimated_created_at"][:7]  # "YYYY-MM"
@@ -63,6 +64,14 @@ for book in books:
     bucket["exclusive"] += 1 if book["exclusive"] else 0
     bucket["chars"] += book["chars"]
 
+    day_key = book["estimated_created_at"][:10]  # "YYYY-MM-DD"
+    day_bucket = days[day_key]
+    day_bucket["count"] += 1
+    if book["ai_generated"]:
+        day_bucket["ai_generated"] += 1
+    else:
+        day_bucket["non_ai"] += 1
+
 rows = [{"month": m, **v} for m, v in sorted(months.items())]
 
 cumulative = 0
@@ -70,4 +79,6 @@ for row in rows:
     cumulative += row["count"]
     row["cumulative"] = cumulative
 
-print(json.dumps(rows, ensure_ascii=False))
+daily_rows = [{"date": d, **v} for d, v in sorted(days.items())]
+
+print(json.dumps({"months": rows, "days": daily_rows}, ensure_ascii=False))

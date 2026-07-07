@@ -7,11 +7,12 @@ toc: false
 # Рост во времени
 
 ```js
-const rows = FileAttachment("data/growth-timeline.json").json();
+const timeline = FileAttachment("data/growth-timeline.json").json();
 ```
 
 ```js
-const parsed = rows.map((d) => ({...d, date: new Date(d.month + "-01")}));
+const parsed = timeline.months.map((d) => ({...d, date: new Date(d.month + "-01")}));
+const dailyParsed = timeline.days.map((d) => ({...d, date: new Date(d.date)}));
 ```
 
 ## Совокупное число книг по оценённому месяцу создания
@@ -58,6 +59,43 @@ function monthlyChart(data, {width} = {}) {
 <div class="grid grid-cols-1">
   <div class="card">
     ${resize((width) => monthlyChart(parsed, {width}))}
+  </div>
+</div>
+
+## Книги, созданные по дням: ИИ vs не-ИИ
+
+Каждая точка на оси X — оценённый день создания книги. ИИ-сгенерированных книг пока мало, поэтому их линия выглядит гораздо более рваной, чем линия обычных книг.
+
+```js
+const dailySeries = dailyParsed.flatMap((d) => [
+  {date: d.date, type: "Не-ИИ", count: d.non_ai},
+  {date: d.date, type: "ИИ", count: d.ai_generated}
+]);
+```
+
+```js
+function dailyAiChart(data, {width} = {}) {
+  return Plot.plot({
+    width,
+    height: 300,
+    x: {label: null},
+    y: {grid: true, label: "Книг в день"},
+    color: {
+      legend: true,
+      domain: ["Не-ИИ", "ИИ"],
+      range: ["#2a78d6", "rgb(227, 73, 72)"]
+    },
+    marks: [
+      Plot.lineY(data, {x: "date", y: "count", stroke: "type", tip: true}),
+      Plot.ruleY([0])
+    ]
+  });
+}
+```
+
+<div class="grid grid-cols-1">
+  <div class="card">
+    ${resize((width) => dailyAiChart(dailySeries, {width}))}
   </div>
 </div>
 
