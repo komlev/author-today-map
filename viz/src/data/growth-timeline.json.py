@@ -21,8 +21,10 @@ and the correction for the rest has a median of 23 days (long tail up to
 width ISO 8601 UTC (`YYYY-MM-DDTHH:MM:SS.fffffffZ`), so plain string
 comparison already sorts chronologically — no datetime parsing needed.
 """
+import datetime as dt
 import json
 import os
+import statistics as st
 from collections import defaultdict
 
 BOOKS_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "books.jsonl")
@@ -81,4 +83,32 @@ for row in rows:
 
 daily_rows = [{"date": d, **v} for d, v in sorted(days.items())]
 
-print(json.dumps({"months": rows, "days": daily_rows}, ensure_ascii=False))
+# The most recent date is always a partial day (the scrape ran mid-day), so
+# it reads far lower than a real day's rate — drop it before computing any
+# "usual books per day" stats or it would skew the average down.
+full_days = daily_rows[:-1] if len(daily_rows) > 1 else daily_rows
+
+
+def _window_mean(days_back):
+    if not full_days:
+        return None
+    cutoff = (dt.date.fromisoformat(full_days[-1]["date"]) - dt.timedelta(days=days_back - 1)).isoformat()
+    vals = [d["count"] for d in full_days if d["date"] >= cutoff]
+    return st.mean(vals) if vals else None
+
+
+all_counts = [d["count"] for d in full_days]
+daily_stats = {
+    "last_full_date": full_days[-1]["date"] if full_days else None,
+    "mean_all_time": st.mean(all_counts) if all_counts else None,
+    "median_all_time": st.median(all_counts) if all_counts else None,
+    "mean_last_30d": _window_mean(30),
+    "mean_last_90d": _window_mean(90),
+    "mean_last_365d": _window_mean(365),
+}
+
+print(json.dumps({
+    "months": rows,
+    "days": daily_rows,
+    "daily_stats": daily_stats,
+}, ensure_ascii=False))

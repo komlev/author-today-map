@@ -45,10 +45,10 @@ function genreChart(data, {width} = {}) {
 
 ```js
 function tagChart(data, {width} = {}) {
-  const top = data.slice(0, 30);
+  const top = data.slice(0, 50);
   return Plot.plot({
     width,
-    height: 550,
+    height: 900,
     marginLeft: 220,
     x: {grid: true, label: "Книги"},
     y: {label: null},
