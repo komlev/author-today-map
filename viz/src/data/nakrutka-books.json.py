@@ -39,6 +39,8 @@ with open(BOOKS_PATH, encoding="utf-8") as f:
                 "url": book.get("url"),
                 "views": views,
                 "likes": likes,
+                "ai_generated": bool(book.get("ai_generated")),
+                "exclusive": bool(book.get("exclusive")),
             })
 
 view_values = [b["views"] for b in books]
@@ -85,6 +87,16 @@ result = {
     "median_line": median_line,
     "top_view_inflation": top_view_inflation,
     "top_like_inflation": top_like_inflation,
+    # Small enough sets (low thousands) to overlay as individual dots on top
+    # of the density heatmap, unlike the full ~280k-book corpus above.
+    "ai_points": [
+        {"views": b["views"], "likes": b["likes"], "title": b["title"], "author": b["author"]}
+        for b in books if b["ai_generated"]
+    ],
+    "exclusive_points": [
+        {"views": b["views"], "likes": b["likes"], "title": b["title"], "author": b["author"]}
+        for b in books if b["exclusive"]
+    ],
 }
 
 print(json.dumps(result, ensure_ascii=False))

@@ -9,6 +9,7 @@ toc: false
 ```js
 const authors = FileAttachment("data/author-productivity.json").json();
 const graphomaniacs = FileAttachment("data/graphomaniac-stats.json").json();
+const exclusiveAuthors = FileAttachment("data/exclusive-authors.json").json();
 ```
 
 <div class="grid grid-cols-4">
@@ -98,7 +99,7 @@ Inputs.table(
       "Всего просмотров": d.total_views,
       "Ср. просмотров/книгу": d.avg_views_per_book
     }))
-)
+, {select: false})
 ```
 
 ## Самые популярные авторы
@@ -114,7 +115,22 @@ Inputs.table(
       "Всего просмотров": d.total_views,
       "Ср. просмотров/книгу": d.avg_views_per_book
     }))
-)
+, {select: false})
+```
+
+## Эксклюзивные авторы
+
+Авторы, у которых абсолютно все опубликованные книги отмечены как эксклюзив author.today (то есть нигде больше не публикуются) — а не просто часть каталога. Это гораздо более строгий критерий, чем доля эксклюзивных книг: из ${authors.length.toLocaleString("ru-RU")} авторов на платформе таких оказалось всего ${exclusiveAuthors.length}.
+
+```js
+Inputs.table(
+  exclusiveAuthors.map((d) => ({
+    "Автор": d.name,
+    "Книг": d.book_count,
+    "Всего лайков": d.total_likes,
+    "Всего просмотров": d.total_views
+  }))
+, {select: false})
 ```
 
 ## Графоманы: у кого самые длинные книги
@@ -130,7 +146,7 @@ Inputs.table(
     "Книг": d.count,
     "Ср. объём (символов)": d.avg_chars
   }))
-)
+, {select: false})
 ```
 
 ### Не-ИИ авторы
@@ -143,13 +159,13 @@ Inputs.table(
     "Ср. объём (символов)": d.avg_chars,
     "Всего символов": d.total_chars
   }))
-)
+, {select: false})
 ```
 
 ### ИИ-авторы
 
 ${graphomaniacs.top_ai.length === 0
-  ? html`<p><em>Пока нет ни одного автора с ${graphomaniacs.min_books_for_leaderboard}+ книгами, помеченными как ИИ-сгенерированные — на момент последнего скрапинга таких книг всего ${graphomaniacs.overall.find((d) => d.ai_generated)?.count ?? 0} на всю платформу. Таблица заполнится по мере продолжения скрапинга.</em></p>`
+  ? html`<p><em>Пока нет ни одного автора с ${graphomaniacs.min_books_for_leaderboard}+ книгами, помеченными как ИИ-сгенерированные — таких книг всего ${graphomaniacs.overall.find((d) => d.ai_generated)?.count ?? 0} на всю платформу.</em></p>`
   : Inputs.table(
       graphomaniacs.top_ai.map((d) => ({
         "Автор": d.name,
@@ -157,5 +173,5 @@ ${graphomaniacs.top_ai.length === 0
         "Ср. объём (символов)": d.avg_chars,
         "Всего символов": d.total_chars
       }))
-    )
+    , {select: false})
 }

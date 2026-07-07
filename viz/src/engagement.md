@@ -61,39 +61,51 @@ function charsHistogram(data, {width} = {}, {median} = {}) {
 
 ## Объём книги и число просмотров
 
-Плотность книг по объёму текста и числу просмотров (обе оси логарифмические). Более тёмные клетки — больше книг с такими параметрами. Оранжевая рамка отмечает ячейки, где есть эксклюзивные (доступные только на author.today) книги.
+Плотность книг по объёму текста и числу просмотров (обе оси логарифмические). Более тёмные клетки — больше книг с такими параметрами.
 
 ```js
-function charsViewsHeatmap(data, {width} = {}) {
+const showExclusiveOutline = view(Inputs.checkbox(
+  ["Показывать рамку эксклюзива"],
+  {value: ["Показывать рамку эксклюзива"]}
+));
+```
+
+```js
+function charsViewsHeatmap(data, {width} = {}, {showExclusive = true} = {}) {
   const charsThresholds = logThresholds(data.map((d) => d.chars));
   const viewsThresholds = logThresholds(data.map((d) => d.views));
-  const exclusivePoints = data.filter((d) => d.exclusive);
+  const marks = [
+    Plot.rect(data, Plot.bin({fill: "count"}, {
+      x: {value: "chars", thresholds: charsThresholds},
+      y: {value: "views", thresholds: viewsThresholds}
+    }))
+  ];
+  if (showExclusive) {
+    const exclusivePoints = data.filter((d) => d.exclusive);
+    marks.push(Plot.rect(exclusivePoints, Plot.bin({}, {
+      x: {value: "chars", thresholds: charsThresholds},
+      y: {value: "views", thresholds: viewsThresholds},
+      fill: "none",
+      stroke: "orange",
+      strokeWidth: 1.5
+    })));
+  }
   return Plot.plot({
     width,
     height: 500,
     x: {type: "log", label: "Объём (символов)", grid: true},
     y: {type: "log", label: "Просмотров", grid: true},
     color: {type: "log", scheme: "blues", legend: true, label: "Книг"},
-    marks: [
-      Plot.rect(data, Plot.bin({fill: "count"}, {
-        x: {value: "chars", thresholds: charsThresholds},
-        y: {value: "views", thresholds: viewsThresholds}
-      })),
-      Plot.rect(exclusivePoints, Plot.bin({}, {
-        x: {value: "chars", thresholds: charsThresholds},
-        y: {value: "views", thresholds: viewsThresholds},
-        fill: "none",
-        stroke: "orange",
-        strokeWidth: 1.5
-      }))
-    ]
+    marks
   });
 }
 ```
 
+${showExclusiveOutline.length > 0 ? html`<p>Оранжевая рамка отмечает ячейки, где есть эксклюзивные (доступные только на author.today) книги.</p>` : ""}
+
 <div class="grid grid-cols-1">
   <div class="card">
-    ${resize((width) => charsViewsHeatmap(points, {width}))}
+    ${resize((width) => charsViewsHeatmap(points, {width}, {showExclusive: showExclusiveOutline.length > 0}))}
   </div>
 </div>
 
@@ -109,7 +121,7 @@ Inputs.table(
     "Ср. просмотров": d.avg_views,
     "Ср. лайков": d.avg_likes
   }))
-)
+, {select: false})
 ```
 
 ## Самые "любимые" книги
@@ -125,5 +137,5 @@ Inputs.table(
     "Лайков": d.likes,
     "Лайки/просмотры": (d.ratio * 100).toFixed(1) + "%"
   }))
-)
+, {select: false})
 ```

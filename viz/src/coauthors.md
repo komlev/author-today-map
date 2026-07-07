@@ -188,5 +188,5 @@ Inputs.table(
         "Суммарно просмотров": d.views
       };
     })
-)
+, {select: false})
 ```

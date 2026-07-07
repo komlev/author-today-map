@@ -108,5 +108,5 @@ Inputs.table(
       "Ср. объём (символов)": d.avg_chars,
       "Ср. просмотров": d.avg_views
     }))
-)
+, {select: false})
 ```
