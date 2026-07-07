@@ -8,7 +8,19 @@ import json
 import os
 import sys
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+# scraper.py / fix_series.py / fix_authors.py all resolve their data dir to
+# /data (the Docker volume mount point) by default — this script instead
+# hardcoded a path relative to itself, which resolves to /app/data inside
+# the container (nothing mounted there) rather than the actual /data volume.
+# None of the compose services set a DATA_DIR env var explicitly (the other
+# scripts' own Python-level default of "/data" is what actually applies), so
+# checking for an env var here wouldn't detect "running in the container" —
+# checking whether /data itself exists does: it's present when the volume is
+# mounted, absent on a plain local dev machine. An explicit DATA_DIR still
+# wins over both, for parity with the other scripts' override behavior.
+DATA_DIR = os.environ.get("DATA_DIR") or (
+    "/data" if os.path.isdir("/data") else os.path.join(os.path.dirname(__file__), "..", "data")
+)
 INPUT = os.path.join(DATA_DIR, "books.jsonl")
 OUTPUT = os.path.join(DATA_DIR, "authors_from_books.jsonl")
 

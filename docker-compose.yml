@@ -35,6 +35,18 @@ services:
     entrypoint: ["python", "scripts/fix_authors.py"]
     restart: "no"
 
+  # Regenerates authors_from_books.jsonl from books.jsonl — the viz build's
+  # author-level data loaders read this, so it needs to exist in the volume
+  # before viz-build can succeed. Rerun after scraping picks up enough new
+  # books to be worth reflecting (no COOKIES/network needed, pure local
+  # aggregation, so it's fast).
+  extract-authors:
+    build: .
+    volumes:
+      - scraper-data:/data
+    entrypoint: ["python", "scripts/extract_authors.py"]
+    restart: "no"
+
   # One-off build job, same pattern as fix-series/fix-authors above — rerun
   # manually (via Dokploy's "run command" on this service) whenever you want
   # the published dashboard to pick up newly scraped data. Reads the same
