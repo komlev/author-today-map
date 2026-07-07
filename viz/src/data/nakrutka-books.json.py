@@ -36,6 +36,7 @@ with open(BOOKS_PATH, encoding="utf-8") as f:
             books.append({
                 "title": book.get("title"),
                 "author": authors[0]["name"] if authors else None,
+                "author_url": authors[0]["url"] if authors else None,
                 "url": book.get("url"),
                 "views": views,
                 "likes": likes,

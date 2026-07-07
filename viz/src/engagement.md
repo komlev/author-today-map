@@ -7,6 +7,8 @@ toc: false
 # Качество вовлечённости
 
 ```js
+import {linkCell, identity} from "./components/links.js";
+
 const stats = FileAttachment("data/engagement-stats.json").json();
 ```
 
@@ -131,11 +133,11 @@ Inputs.table(
 ```js
 Inputs.table(
   topByRatio.map((d) => ({
-    "Книга": d.title,
-    "Автор": d.author,
+    "Книга": linkCell(d.title, d.url),
+    "Автор": linkCell(d.author, d.author_url),
     "Просмотров": d.views,
     "Лайков": d.likes,
     "Лайки/просмотры": (d.ratio * 100).toFixed(1) + "%"
   }))
-, {select: false})
+, {select: false, format: {"Книга": identity, "Автор": identity}})
 ```

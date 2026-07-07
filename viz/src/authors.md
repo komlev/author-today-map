@@ -7,6 +7,8 @@ toc: false
 # Продуктивность авторов
 
 ```js
+import {linkCell, identity} from "./components/links.js";
+
 const authors = FileAttachment("data/author-productivity.json").json();
 const graphomaniacs = FileAttachment("data/graphomaniac-stats.json").json();
 const exclusiveAuthors = FileAttachment("data/exclusive-authors.json").json();
@@ -94,12 +96,12 @@ Inputs.table(
     .toSorted((a, b) => b.book_count - a.book_count)
     .slice(0, 25)
     .map((d) => ({
-      "Автор": d.name,
+      "Автор": linkCell(d.name, d.url),
       "Книг": d.book_count,
       "Всего просмотров": d.total_views,
       "Ср. просмотров/книгу": d.avg_views_per_book
     }))
-, {select: false})
+, {select: false, format: {"Автор": identity}})
 ```
 
 ## Самые популярные авторы
@@ -110,12 +112,12 @@ Inputs.table(
     .toSorted((a, b) => b.total_views - a.total_views)
     .slice(0, 25)
     .map((d) => ({
-      "Автор": d.name,
+      "Автор": linkCell(d.name, d.url),
       "Книг": d.book_count,
       "Всего просмотров": d.total_views,
       "Ср. просмотров/книгу": d.avg_views_per_book
     }))
-, {select: false})
+, {select: false, format: {"Автор": identity}})
 ```
 
 ## Эксклюзивные авторы
@@ -125,12 +127,12 @@ Inputs.table(
 ```js
 Inputs.table(
   exclusiveAuthors.map((d) => ({
-    "Автор": d.name,
+    "Автор": linkCell(d.name, d.url),
     "Книг": d.book_count,
     "Всего лайков": d.total_likes,
     "Всего просмотров": d.total_views
   }))
-, {select: false})
+, {select: false, format: {"Автор": identity}})
 ```
 
 ## Графоманы: у кого самые длинные книги
@@ -154,12 +156,12 @@ Inputs.table(
 ```js
 Inputs.table(
   graphomaniacs.top_non_ai.map((d) => ({
-    "Автор": d.name,
+    "Автор": linkCell(d.name, d.url),
     "Книг": d.book_count,
     "Ср. объём (символов)": d.avg_chars,
     "Всего символов": d.total_chars
   }))
-, {select: false})
+, {select: false, format: {"Автор": identity}})
 ```
 
 ### ИИ-авторы
@@ -168,10 +170,10 @@ ${graphomaniacs.top_ai.length === 0
   ? html`<p><em>Пока нет ни одного автора с ${graphomaniacs.min_books_for_leaderboard}+ книгами, помеченными как ИИ-сгенерированные — таких книг всего ${graphomaniacs.overall.find((d) => d.ai_generated)?.count ?? 0} на всю платформу.</em></p>`
   : Inputs.table(
       graphomaniacs.top_ai.map((d) => ({
-        "Автор": d.name,
+        "Автор": linkCell(d.name, d.url),
         "Книг": d.book_count,
         "Ср. объём (символов)": d.avg_chars,
         "Всего символов": d.total_chars
       }))
-    , {select: false})
+    , {select: false, format: {"Автор": identity}})
 }

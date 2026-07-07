@@ -28,7 +28,7 @@ EXCLUDED_AUTHOR_URLS = {
 MIN_BOOKS_FOR_LEADERBOARD = 5
 TOP_N = 20
 
-per_author = defaultdict(lambda: {"name": None, "count": 0, "chars": 0})
+per_author = defaultdict(lambda: {"name": None, "url": None, "count": 0, "chars": 0})
 overall = {
     True: {"count": 0, "chars": 0},
     False: {"count": 0, "chars": 0},
@@ -53,6 +53,7 @@ with open(BOOKS_PATH, encoding="utf-8") as f:
                 continue
             entry = per_author[(url, ai_generated)]
             entry["name"] = author.get("name")
+            entry["url"] = url
             entry["count"] += 1
             entry["chars"] += chars
 
@@ -61,6 +62,7 @@ for (url, ai_generated), entry in per_author.items():
     if entry["count"] >= MIN_BOOKS_FOR_LEADERBOARD:
         leaderboard[ai_generated].append({
             "name": entry["name"],
+            "url": entry["url"],
             "book_count": entry["count"],
             "total_chars": entry["chars"],
             "avg_chars": round(entry["chars"] / entry["count"]),

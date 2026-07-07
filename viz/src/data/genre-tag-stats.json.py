@@ -11,7 +11,7 @@ from itertools import combinations
 
 BOOKS_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "books.jsonl")
 
-TOP_TAGS_FOR_COOCCURRENCE = 30
+TOP_TAGS_FOR_COOCCURRENCE = 50
 
 # Generic format tags that just restate work_type rather than describe
 # content — not useful in a genre/tag landscape.

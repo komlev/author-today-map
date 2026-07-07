@@ -9,6 +9,8 @@ toc: false
 Эта страница ищет книги и авторов, чья статистика отклоняется от типичного соотношения просмотров и лайков: либо просмотров подозрительно много относительно лайков (возможная накрутка просмотров), либо наоборот (возможная накрутка лайков). Ориентир в обоих графиках — медиана лайков среди книг/авторов со сопоставимым охватом просмотров.
 
 ```js
+import {linkCell, identity} from "./components/links.js";
+
 const authors = FileAttachment("data/author-productivity.json").json();
 const books = FileAttachment("data/nakrutka-books.json").json();
 ```
@@ -93,13 +95,13 @@ Inputs.table(
     .toSorted((a, b) => a.ratio - b.ratio)
     .slice(0, 20)
     .map((d) => ({
-      "Автор": d.name,
+      "Автор": linkCell(d.name, d.url),
       "Просмотров": d.total_views,
       "Лайков": d.total_likes,
       "Обычно лайков при таком охвате": Math.round(d.expected_likes),
       "Во сколько раз меньше": (1 / d.ratio).toFixed(1) + "x"
     }))
-, {select: false})
+, {select: false, format: {"Автор": identity}})
 ```
 
 ### Подозрительно много лайков
@@ -111,13 +113,13 @@ Inputs.table(
     .toSorted((a, b) => b.ratio - a.ratio)
     .slice(0, 20)
     .map((d) => ({
-      "Автор": d.name,
+      "Автор": linkCell(d.name, d.url),
       "Просмотров": d.total_views,
       "Лайков": d.total_likes,
       "Обычно лайков при таком охвате": Math.round(d.expected_likes),
       "Во сколько раз больше": d.ratio.toFixed(1) + "x"
     }))
-, {select: false})
+, {select: false, format: {"Автор": identity}})
 ```
 
 ## По книгам
@@ -176,14 +178,14 @@ function nakrutkaBooksChart(data, medianLine, aiPoints, exclusivePoints, {width}
 ```js
 Inputs.table(
   books.top_view_inflation.map((d) => ({
-    "Книга": d.title,
-    "Автор": d.author,
+    "Книга": linkCell(d.title, d.url),
+    "Автор": linkCell(d.author, d.author_url),
     "Просмотров": d.views,
     "Лайков": d.likes,
     "Обычно лайков при таком охвате": d.expected_likes,
     "Во сколько раз меньше": (1 / d.ratio).toFixed(1) + "x"
   }))
-, {select: false})
+, {select: false, format: {"Книга": identity, "Автор": identity}})
 ```
 
 ### Подозрительно много лайков (книги)
@@ -191,12 +193,12 @@ Inputs.table(
 ```js
 Inputs.table(
   books.top_like_inflation.map((d) => ({
-    "Книга": d.title,
-    "Автор": d.author,
+    "Книга": linkCell(d.title, d.url),
+    "Автор": linkCell(d.author, d.author_url),
     "Просмотров": d.views,
     "Лайков": d.likes,
     "Обычно лайков при таком охвате": d.expected_likes,
     "Во сколько раз больше": d.ratio.toFixed(1) + "x"
   }))
-, {select: false})
+, {select: false, format: {"Книга": identity, "Автор": identity}})
 ```

@@ -21,6 +21,10 @@ export default {
   root: "src",
   theme: "dashboard",
 
+  // src/robots.txt isn't linked from any page, so it wouldn't otherwise be
+  // discovered by the build's page/asset crawl — dynamicPaths forces it in.
+  dynamicPaths: ["/robots.txt"],
+
   // Framework hardcodes "Previous page"/"Next page" and "Built with Observable"
   // in English via CSS ::before content; override both here for a fully
   // Russian-language UI.

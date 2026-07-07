@@ -20,7 +20,7 @@ EXCLUDED_AUTHOR_URLS = {
     "https://author.today/u/contest8/works",
 }
 
-per_author = defaultdict(lambda: {"name": None, "book_count": 0, "exclusive_count": 0, "total_views": 0, "total_likes": 0})
+per_author = defaultdict(lambda: {"name": None, "url": None, "book_count": 0, "exclusive_count": 0, "total_views": 0, "total_likes": 0})
 
 with open(BOOKS_PATH, encoding="utf-8") as f:
     for line in f:
@@ -38,6 +38,7 @@ with open(BOOKS_PATH, encoding="utf-8") as f:
                 continue
             entry = per_author[url]
             entry["name"] = author.get("name")
+            entry["url"] = url
             entry["book_count"] += 1
             entry["exclusive_count"] += 1 if exclusive else 0
             entry["total_views"] += views
@@ -46,6 +47,7 @@ with open(BOOKS_PATH, encoding="utf-8") as f:
 exclusive_authors = [
     {
         "name": entry["name"],
+        "url": entry["url"],
         "book_count": entry["book_count"],
         "total_views": entry["total_views"],
         "total_likes": entry["total_likes"],

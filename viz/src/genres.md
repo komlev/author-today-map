@@ -20,10 +20,10 @@ const cooccurrence = stats.tag_cooccurrence;
 
 ```js
 function genreChart(data, {width} = {}) {
-  const top = data.slice(0, 25);
+  const top = data.slice(0, 50);
   return Plot.plot({
     width,
-    height: 500,
+    height: 900,
     marginLeft: 220,
     x: {grid: true, label: "Книги"},
     y: {label: null},
@@ -68,11 +68,11 @@ function tagChart(data, {width} = {}) {
 
 ## Какие теги встречаются вместе
 
-Совместная встречаемость 30 самых частых тегов — чем темнее ячейка, тем чаще эта пара тегов встречается в одной книге.
+Совместная встречаемость 50 самых частых тегов — чем темнее ячейка, тем чаще эта пара тегов встречается в одной книге.
 
 ```js
 function tagHeatmap(data, {width} = {}) {
-  const order = tags.slice(0, 30).map((d) => d.tag);
+  const order = tags.slice(0, 50).map((d) => d.tag);
   // co-occurrence is stored one-directional (a < b); mirror it for a full matrix
   const cells = [];
   for (const {a, b, count} of data) {
@@ -97,7 +97,7 @@ function tagHeatmap(data, {width} = {}) {
 
 <div class="grid grid-cols-1">
   <div class="card">
-    ${resize((width) => tagHeatmap(cooccurrence, {width: Math.min(width, 900)}))}
+    ${resize((width) => tagHeatmap(cooccurrence, {width: Math.min(width, 1100)}))}
   </div>
 </div>
 

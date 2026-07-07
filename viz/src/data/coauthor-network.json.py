@@ -119,6 +119,7 @@ nodes = [
         "name": best_name(name_counts.get(url, Counter())),
         "book_count": book_counts.get(url, 0),
         "component_size": component_size[url],
+        "degree": len(adjacency[url]),  # distinct co-authors, regardless of component size
         "avg_views_per_book": round(view_totals[url] / book_counts[url], 1) if book_counts[url] else 0,
         "ai_generated": url in ai_authors,
     }

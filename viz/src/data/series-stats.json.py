@@ -64,6 +64,7 @@ for url, entry in series_books.items():
     likes = sum(b.get("likes") or 0 for b in entry["books"])
     categories[cat][url] = {
         "name": entry["name"],
+        "url": url,
         "count": len(entry["books"]),
         "views": views,
         "likes": likes,
@@ -89,10 +90,10 @@ def build_category(series_map):
         "avg_likes_per_book": round(likes_total / book_total, 1) if book_total else 0,
         "size_distribution": [{"series_length": k, "count": v} for k, v in sorted(size_distribution.items())],
         "top_by_book_count": [
-            {"name": s["name"], "book_count": s["count"], "total_views": s["views"]} for s in top_by_book_count
+            {"name": s["name"], "url": s["url"], "book_count": s["count"], "total_views": s["views"]} for s in top_by_book_count
         ],
         "top_by_views": [
-            {"name": s["name"], "book_count": s["count"], "total_views": s["views"]} for s in top_by_views
+            {"name": s["name"], "url": s["url"], "book_count": s["count"], "total_views": s["views"]} for s in top_by_views
         ],
     }
 

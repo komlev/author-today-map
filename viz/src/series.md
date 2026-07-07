@@ -7,6 +7,8 @@ toc: false
 # Серии и одиночные книги
 
 ```js
+import {linkCell, identity} from "./components/links.js";
+
 const stats = FileAttachment("data/series-stats.json").json();
 ```
 
@@ -86,11 +88,11 @@ function sizeDistributionChart(data, {width} = {}) {
 ```js
 Inputs.table(
   literary.top_by_book_count.map((d) => ({
-    "Серия": d.name,
+    "Серия": linkCell(d.name, d.url),
     "Книг": d.book_count,
     "Всего просмотров": d.total_views
   }))
-, {select: false})
+, {select: false, format: {"Серия": identity}})
 ```
 
 ### Самые просматриваемые серии
@@ -98,11 +100,11 @@ Inputs.table(
 ```js
 Inputs.table(
   literary.top_by_views.map((d) => ({
-    "Серия": d.name,
+    "Серия": linkCell(d.name, d.url),
     "Книг": d.book_count,
     "Всего просмотров": d.total_views
   }))
-, {select: false})
+, {select: false, format: {"Серия": identity}})
 ```
 
 ## Поэзия
@@ -137,11 +139,11 @@ Inputs.table(
 ```js
 Inputs.table(
   poetry.top_by_book_count.map((d) => ({
-    "Серия": d.name,
+    "Серия": linkCell(d.name, d.url),
     "Книг": d.book_count,
     "Всего просмотров": d.total_views
   }))
-, {select: false})
+, {select: false, format: {"Серия": identity}})
 ```
 
 ### Самые просматриваемые поэтические серии
@@ -149,9 +151,9 @@ Inputs.table(
 ```js
 Inputs.table(
   poetry.top_by_views.map((d) => ({
-    "Серия": d.name,
+    "Серия": linkCell(d.name, d.url),
     "Книг": d.book_count,
     "Всего просмотров": d.total_views
   }))
-, {select: false})
+, {select: false, format: {"Серия": identity}})
 ```
