@@ -45,6 +45,11 @@ function statusChart(data, {width} = {}) {
 Доля законченных и незаконченных книг среди 15 самых частых жанров.
 
 ```js
+// Fixed canonical order (not sorted by frequency) so the status legend and
+// stacking order stay stable across genres instead of shuffling based on
+// each genre's count breakdown.
+const STATUS_ORDER = ["весь текст", "в процессе", "аудиокнига завершена", "не указан"];
+
 function statusByGenreChart(data, {width} = {}) {
   const genreOrder = d3.groupSort(data, (v) => -d3.sum(v, (d) => d.count), (d) => d.genre);
   return Plot.plot({
@@ -53,9 +58,9 @@ function statusByGenreChart(data, {width} = {}) {
     marginLeft: 220,
     x: {grid: true, label: "Доля книг", percent: true, tickFormat: (d) => `${d}%`},
     y: {label: null, domain: genreOrder},
-    color: {legend: true, label: "Статус"},
+    color: {legend: true, label: "Статус", domain: STATUS_ORDER},
     marks: [
-      Plot.barX(data, Plot.stackX({x: "count", y: "genre", fill: "status", offset: "normalize", tip: true})),
+      Plot.barX(data, Plot.stackX({x: "count", y: "genre", fill: "status", offset: "normalize", order: STATUS_ORDER, tip: true})),
       Plot.ruleX([0])
     ]
   });

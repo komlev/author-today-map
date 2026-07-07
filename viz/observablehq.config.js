@@ -11,6 +11,8 @@ export default {
         {name: "Серии и одиночные книги", path: "/series"},
         {name: "Качество вовлечённости", path: "/engagement"},
         {name: "Продуктивность авторов", path: "/authors"},
+        {name: "Накрутка", path: "/nakrutka"},
+        {name: "Соавторство", path: "/coauthors"},
         {name: "Рост во времени", path: "/growth"}
       ]
     }

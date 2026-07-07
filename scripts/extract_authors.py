@@ -12,6 +12,18 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 INPUT = os.path.join(DATA_DIR, "books.jsonl")
 OUTPUT = os.path.join(DATA_DIR, "authors_from_books.jsonl")
 
+# Platform/contest accounts credited as a book's "author" alongside (or
+# instead of) the real writer — not people. Confirmed via the genre spread:
+# e.g. contest_audio is credited on 679 books spanning all 58 genres on the
+# platform, which no individual author does. Same exclusion applied in
+# viz/src/data/coauthor-network.json.py and graphomaniac-stats.json.py.
+EXCLUDED_AUTHOR_URLS = {
+    "https://author.today/u/contest_audio/works",
+    "https://author.today/u/future/works",
+    "https://author.today/u/evolution/works",
+    "https://author.today/u/contest8/works",
+}
+
 
 def main():
     authors = {}
@@ -25,7 +37,7 @@ def main():
             for author in book.get("authors") or []:
                 url = author.get("url")
                 name = author.get("name")
-                if not url:
+                if not url or url in EXCLUDED_AUTHOR_URLS:
                     continue
                 entry = authors.get(url)
                 if entry is None:

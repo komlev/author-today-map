@@ -61,10 +61,13 @@ function charsHistogram(data, {width} = {}, {median} = {}) {
 
 ## Объём книги и число просмотров
 
-Плотность книг по объёму текста и числу просмотров (обе оси логарифмические). Более тёмные клетки — больше книг с такими параметрами.
+Плотность книг по объёму текста и числу просмотров (обе оси логарифмические). Более тёмные клетки — больше книг с такими параметрами. Оранжевая рамка отмечает ячейки, где есть эксклюзивные (доступные только на author.today) книги.
 
 ```js
 function charsViewsHeatmap(data, {width} = {}) {
+  const charsThresholds = logThresholds(data.map((d) => d.chars));
+  const viewsThresholds = logThresholds(data.map((d) => d.views));
+  const exclusivePoints = data.filter((d) => d.exclusive);
   return Plot.plot({
     width,
     height: 500,
@@ -73,8 +76,15 @@ function charsViewsHeatmap(data, {width} = {}) {
     color: {type: "log", scheme: "blues", legend: true, label: "Книг"},
     marks: [
       Plot.rect(data, Plot.bin({fill: "count"}, {
-        x: {value: "chars", thresholds: logThresholds(data.map((d) => d.chars))},
-        y: {value: "views", thresholds: logThresholds(data.map((d) => d.views))}
+        x: {value: "chars", thresholds: charsThresholds},
+        y: {value: "views", thresholds: viewsThresholds}
+      })),
+      Plot.rect(exclusivePoints, Plot.bin({}, {
+        x: {value: "chars", thresholds: charsThresholds},
+        y: {value: "views", thresholds: viewsThresholds},
+        fill: "none",
+        stroke: "orange",
+        strokeWidth: 1.5
       }))
     ]
   });
