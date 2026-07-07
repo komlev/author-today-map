@@ -35,5 +35,30 @@ services:
     entrypoint: ["python", "scripts/fix_authors.py"]
     restart: "no"
 
+  # One-off build job, same pattern as fix-series/fix-authors above — rerun
+  # manually (via Dokploy's "run command" on this service) whenever you want
+  # the published dashboard to pick up newly scraped data. Reads the same
+  # scraper-data volume read-only and writes the static site into viz-dist,
+  # which the viz service below serves.
+  viz-build:
+    build:
+      context: ./viz
+    volumes:
+      - scraper-data:/data:ro
+      - viz-dist:/publish
+    restart: "no"
+
+  # Serves whatever viz-build last produced. Stays empty/404 until viz-build
+  # has been run at least once.
+  viz:
+    image: nginx:alpine
+    volumes:
+      - viz-dist:/usr/share/nginx/html:ro
+      - ./viz/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
 volumes:
   scraper-data:
+  viz-dist:
