@@ -34,6 +34,7 @@ from scraper import (  # noqa: E402
     MIN_DELAY,
     MAX_DELAY,
     BASE_URL,
+    books_file_lock,
     fetch,
     log,
     make_session,
@@ -53,6 +54,15 @@ def main():
         log.error("%s not found", BOOKS_FILE)
         sys.exit(1)
 
+    # Held for the whole read+patch+write pass — see books_file_lock's
+    # docstring. In particular this must wrap the *read* too, not just the
+    # write: reading before a concurrent fix script's write has landed is
+    # exactly what caused the silent clobber this lock prevents.
+    with books_file_lock():
+        _run()
+
+
+def _run():
     with open(BOOKS_FILE, encoding="utf-8") as f:
         lines = f.readlines()
 

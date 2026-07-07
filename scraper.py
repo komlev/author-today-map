@@ -48,6 +48,7 @@ State files (DATA_DIR):
   social_edges.jsonl one friend/following edge per line
 """
 
+import fcntl
 import json
 import logging
 import os
@@ -55,6 +56,7 @@ import random
 import re
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -76,6 +78,7 @@ BASE_URL = "https://author.today"
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 
 BOOKS_FILE       = DATA_DIR / "books.jsonl"
+BOOKS_LOCK_FILE  = DATA_DIR / ".books.lock"
 AUTHORS_FILE     = DATA_DIR / "authors.jsonl"
 PROGRESS_FILE    = DATA_DIR / "progress.json"
 AUTHOR_QUEUE     = DATA_DIR / "author_queue.txt"
@@ -87,6 +90,28 @@ SEEN_SOCIAL_FILE = DATA_DIR / "seen_social.txt"
 MAX_ID    = int(os.environ.get("MAX_ID", "618017"))
 MIN_DELAY = float(os.environ.get("MIN_DELAY", "1.5"))
 MAX_DELAY = float(os.environ.get("MAX_DELAY", "4.0"))
+
+
+@contextmanager
+def books_file_lock():
+    """Exclusive lock around a full read-modify-write pass over BOOKS_FILE.
+
+    scripts/fix_*.py each read the whole file into memory, patch the
+    records they care about, and rewrite the whole file back — so if two
+    such scripts overlap in time, whichever finishes last silently
+    clobbers the other's changes for fields it doesn't itself touch (it
+    never saw them, since it loaded its own copy before the first script's
+    write landed). Wrapping each script's read+write in this lock makes a
+    second, overlapping run block until the first fully finishes, instead
+    of racing.
+    """
+    BOOKS_LOCK_FILE.touch(exist_ok=True)
+    with open(BOOKS_LOCK_FILE) as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 # ---------------------------------------------------------------------------
