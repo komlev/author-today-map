@@ -151,6 +151,44 @@ def _abs(href: str) -> str:
     return href if href.startswith("http") else BASE_URL + href
 
 
+def parse_authors_list(soup: BeautifulSoup) -> list[dict]:
+    """Find the book's real byline authors.
+
+    Scoped to div.book-authors — an unscoped `a[href*='/u/'][href*='/works']`
+    search also matches unrelated profile links embedded in free-text
+    annotations (e.g. "совместно с: <link>" dedications/shoutouts), which
+    would add phantom co-authors. Same bug class as the series link fix
+    (see parse_series_link).
+    """
+    # Audiobook author hrefs have ?format=audiobook suffix, so use *= not $=
+    return [
+        {"name": _text(a), "url": _abs(a["href"].split("?")[0])}
+        for a in soup.select("div.book-authors a[href*='/u/'][href*='/works']")
+        if _text(a)
+    ]
+
+
+def parse_series_link(soup: BeautifulSoup) -> dict | None:
+    """Find the genuine "Цикл: <a>" series badge.
+
+    An unscoped `a[href*='/work/series/']` search also matches unrelated
+    /work/series/ links embedded in free-text annotations (e.g. a fanfic's
+    annotation linking to the original work's series page) — and since the
+    site renders those inline annotation links with the raw URL as visible
+    text, that produces a series name that's literally a URL. Scoping to a
+    containing div (e.g. book-meta-panel) does NOT reliably fix this: that
+    div's HTML is malformed/unclosed upstream on some pages, so a lenient
+    parser nests far more content inside it than the visual boundary
+    suggests. Anchoring on the "Цикл" label itself is the only selector
+    verified against both a genuine series page and a false-positive page.
+    """
+    label = soup.find("span", class_="text-muted", string=lambda s: s and "Цикл" in s)
+    a = label.find_next_sibling("a") if label else None
+    if not a or not a.get("href"):
+        return None
+    return {"name": _text(a), "url": _abs(a["href"])}
+
+
 def _hint_int(soup, prefix: str) -> int | None:
     el = soup.select_one(f"span[data-hint^='{prefix}']")
     if not el:
@@ -180,12 +218,7 @@ def parse_book_page(soup: BeautifulSoup, work_id: str, final_url: str) -> dict |
             or soup.select_one("h1.book-title")
         )
 
-        # Audiobook author hrefs have ?format=audiobook suffix, so use *= not $=
-        authors = [
-            {"name": _text(a), "url": _abs(a["href"].split("?")[0])}
-            for a in soup.select("a[href*='/u/'][href*='/works']")
-            if _text(a)
-        ]
+        authors = parse_authors_list(soup)
 
         genre_links = soup.select("div.book-genres a")
         work_type = _text(genre_links[0]) if genre_links else None
@@ -199,8 +232,7 @@ def parse_book_page(soup: BeautifulSoup, work_id: str, final_url: str) -> dict |
 
         cover_el  = soup.select_one("img.cover-image")
         status_i  = soup.select_one("i.book-status-icon")
-        # Exclude the "buy series" button which also matches /work/series/
-        series_a  = soup.select_one("a[href*='/work/series/']:not([href*='/buy/'])")
+        series    = parse_series_link(soup)
         time_el   = soup.select_one("span[data-time]")
         ann_el    = soup.select_one("div.annotation[itemprop='description']")
 
@@ -229,7 +261,7 @@ def parse_book_page(soup: BeautifulSoup, work_id: str, final_url: str) -> dict |
             "genres":       genres,
             "tags":         tags,
             "status":       _text(status_i.parent) if status_i else None,
-            "series":       {"name": _text(series_a), "url": _abs(series_a["href"])} if series_a else None,
+            "series":       series,
             "updated_at":   time_el["data-time"] if time_el else None,
             "views":        _hint_int(soup, "Просмотры"),
             "likes":        likes,

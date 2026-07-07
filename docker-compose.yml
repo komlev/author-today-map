@@ -11,5 +11,29 @@ services:
       - DEEP_SCRAPE=${DEEP_SCRAPE:-}
     restart: "no"
 
+  fix-series:
+    build: .
+    volumes:
+      - scraper-data:/data
+    environment:
+      - COOKIES=${COOKIES}
+      - MIN_DELAY=${MIN_DELAY:-1.5}
+      - MAX_DELAY=${MAX_DELAY:-4.0}
+      - DEBUG=${DEBUG:-}
+    entrypoint: ["python", "scripts/fix_series.py"]
+    restart: "no"
+
+  fix-authors:
+    build: .
+    volumes:
+      - scraper-data:/data
+    environment:
+      - COOKIES=${COOKIES}
+      - MIN_DELAY=${MIN_DELAY:-1.5}
+      - MAX_DELAY=${MAX_DELAY:-4.0}
+      - DEBUG=${DEBUG:-}
+    entrypoint: ["python", "scripts/fix_authors.py"]
+    restart: "no"
+
 volumes:
   scraper-data:
