@@ -98,7 +98,9 @@ for x, y in edge_counts:
     adjacency[y].add(x)
 
 component_size: dict[str, int] = {}
+component_id: dict[str, int] = {}
 unvisited = set(collab_nodes)
+next_component_id = 0
 while unvisited:
     start = next(iter(unvisited))
     stack = [start]
@@ -112,12 +114,15 @@ while unvisited:
     unvisited -= component
     for node in component:
         component_size[node] = len(component)
+        component_id[node] = next_component_id
+    next_component_id += 1
 
 nodes = [
     {
         "id": url,
         "name": best_name(name_counts.get(url, Counter())),
         "book_count": book_counts.get(url, 0),
+        "component_id": component_id[url],
         "component_size": component_size[url],
         "degree": len(adjacency[url]),  # distinct co-authors, regardless of component size
         "avg_views_per_book": round(view_totals[url] / book_counts[url], 1) if book_counts[url] else 0,

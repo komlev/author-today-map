@@ -13,6 +13,7 @@ export default {
         {name: "Продуктивность авторов", path: "/authors"},
         {name: "Накрутка", path: "/nakrutka"},
         {name: "Соавторство", path: "/coauthors"},
+        {name: "6 рукопожатий", path: "/handshakes"},
         {name: "Рост во времени", path: "/growth"},
         {name: "Правки после публикации", path: "/edits"}
       ]
